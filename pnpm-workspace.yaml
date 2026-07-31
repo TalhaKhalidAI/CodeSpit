@@ -1,0 +1,9 @@
+allowBuilds:
+  esbuild: set this to true or false
+  tree-sitter: false
+  tree-sitter-javascript: false
+  tree-sitter-json: false
+  tree-sitter-php: false
+  tree-sitter-python: false
+  tree-sitter-ruby: false
+  tree-sitter-typescript: false
