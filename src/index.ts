@@ -8,6 +8,8 @@ import { parseFile } from './parser/astParser.js';
 import { logger, formatNumber } from './utils/logger.js';
 import { getRelativePath, writeOutputFile } from './utils/fileUtils.js';
 import type { ExtractOptions, ParseResult } from './types/index.js';
+import { SmartContextBuilder } from './builder/contextBuilder.js';
+import { estimateTokens } from './utils/tokenCalculator.js';
 
 const rl = readline.createInterface({
   input: process.stdin,
@@ -93,7 +95,6 @@ function parseSingleFile(filePath: string, options: Partial<ExtractOptions>): Pa
   const code = fs.readFileSync(filePath, 'utf-8');
   const ext = path.extname(filePath).toLowerCase();
   
-  // Check if extension is supported
   const supportedExtensions = options.includeExtensions || ['.ts', '.tsx', '.js', '.jsx', '.py'];
   if (!supportedExtensions.includes(ext)) {
     logger.warn(`Extension '${ext}' may not be fully supported. Trying to parse anyway...`);
@@ -108,7 +109,7 @@ function parseSingleFile(filePath: string, options: Partial<ExtractOptions>): Pa
 }
 
 // ============================================================
-// FORMAT SINGLE FILE OUTPUT - REFACTORED
+// FORMAT SINGLE FILE OUTPUT
 // ============================================================
 
 function buildASTSummary(result: ParseResult): string {
@@ -120,7 +121,6 @@ function buildASTSummary(result: ParseResult): string {
   output += `          • Classes: ${result.classes.length}\n`;
   output += `          • Imports: ${result.imports.length}\n`;
 
-  // Functions
   if (result.functions.length > 0) {
     output += `        📋 Functions Found:\n`;
     for (const fn of result.functions) {
@@ -128,7 +128,6 @@ function buildASTSummary(result: ParseResult): string {
     }
   }
 
-  // Classes
   if (result.classes.length > 0) {
     output += `        📋 Classes Found:\n`;
     for (const cls of result.classes) {
@@ -136,7 +135,6 @@ function buildASTSummary(result: ParseResult): string {
     }
   }
 
-  // Interfaces
   if (result.interfaces.length > 0) {
     output += `        📋 Interfaces Found:\n`;
     for (const intf of result.interfaces) {
@@ -144,7 +142,6 @@ function buildASTSummary(result: ParseResult): string {
     }
   }
 
-  // Types
   if (result.types.length > 0) {
     output += `        📋 Types Found:\n`;
     for (const type of result.types) {
@@ -240,18 +237,13 @@ function formatSingleFileOutput(
   output += `    📄 [${relPath}]\n`;
   output += `    └── CONTENT:\n`;
 
-  // AST Summary
   output += buildASTSummary(result);
-
-  // Chunks
   output += buildChunksOutput(result, useCompactOutput);
 
-  // Full source code (only in FULL mode)
   if (!useCompactOutput) {
     output += buildSourceCodeOutput(code, options);
   }
 
-  // Summary
   output += buildSingleFileSummary(result);
 
   return output;
@@ -293,7 +285,6 @@ function formatDirectoryOutput(
     output += `    📄 [${relPath}]\n`;
     output += `    └── CONTENT:\n`;
 
-    // AST Summary (without line numbers for compactness)
     output += `        🔬 AST ANALYSIS:\n`;
     output += `        📊 AST Summary:\n`;
     output += `          • Language: ${result.language}\n`;
@@ -321,7 +312,6 @@ function formatDirectoryOutput(
       }
     }
 
-    // Chunks (limited to 5 for directories)
     if (result.chunks.length > 0) {
       output += `        🧩 Semantic Chunks:\n`;
       for (let i = 0; i < Math.min(result.chunks.length, 5); i++) {
@@ -341,7 +331,6 @@ function formatDirectoryOutput(
       }
     }
 
-    // Full file content
     const maxLines = options.maxLines || 500;
     const lines = code.split('\n');
     for (let i = 0; i < Math.min(lines.length, maxLines); i++) {
@@ -352,7 +341,6 @@ function formatDirectoryOutput(
     }
   }
 
-  // Summary
   output += '\n\n============================================================\n';
   output += '📊 EXTRACTION SUMMARY\n';
   output += '============================================================\n';
@@ -369,21 +357,94 @@ function formatDirectoryOutput(
 }
 
 // ============================================================
+// HELPERS
+// ============================================================
+
+function calculateFileScore(result: ParseResult): number {
+  let score = 0;
+  score += result.exports.length * 15;
+  score += result.imports.length * 5;
+  score += result.functions.length * 8;
+  score += result.classes.length * 10;
+  
+  if (result.file.endsWith('.ts') || result.file.endsWith('.tsx')) {
+    score += 20;
+  }
+  if (result.file.includes('index.') || result.file.includes('main.')) {
+    score += 30;
+  }
+  
+  const lineCount = result.chunks.reduce((sum, c) => 
+    sum + c.content.split('\n').length, 0
+  );
+  score += Math.min(lineCount / 50, 20);
+  
+  return score;
+}
+
+function trimResultsToBudget(
+  results: ParseResult[], 
+  budget: number
+): ParseResult[] {
+  const scored = results.map(result => ({
+    result,
+    score: calculateFileScore(result)
+  }));
+  
+  scored.sort((a, b) => b.score - a.score);
+  
+  const trimmed: ParseResult[] = [];
+  let tokens = 0;
+  
+  for (const item of scored) {
+    const itemTokens = estimateTokens(JSON.stringify(item.result));
+    if (tokens + itemTokens <= budget * 0.8) {
+      trimmed.push(item.result);
+      tokens += itemTokens;
+    }
+  }
+  
+  return trimmed;
+}
+
+// ============================================================
 // MAIN
 // ============================================================
 
 async function main() {
   logger.header('🤖 CodeSpit - AI-READY CODE EXTRACTOR WITH AST PARSING');
 
-  // Check if a file was passed as argument
   const args = process.argv.slice(2);
   const fileArg = args[0];
+
+  // Parse new CLI options
+  const entryArg = args.find(a => a.startsWith('--entry='));
+  const depthArg = args.find(a => a.startsWith('--depth='));
+  const strategyArg = args.find(a => a.startsWith('--strategy='));
+  const budgetArg = args.find(a => a.startsWith('--budget='));
+  const autoTrim = args.includes('--auto-trim');
+  const interactive = args.includes('--interactive');
+
+  const entryFiles = entryArg 
+    ? (entryArg.split('=')[1]?.split(',') || ['src/index.ts'])
+    : ['src/index.ts'];
+
+  const maxDepth = depthArg 
+    ? parseInt(depthArg.split('=')[1] || '3')
+    : 3;
+
+  const strategy = strategyArg
+    ? (strategyArg.split('=')[1] as 'all' | 'direct' | 'minimal' || 'direct')
+    : 'direct';
+
+  const tokenBudget = budgetArg
+    ? parseInt(budgetArg.split('=')[1] || '150000')
+    : 150000;
 
   let targetPath = '.';
   let isSingleFile = false;
 
   if (fileArg) {
-    // Single file mode
     const resolvedPath = path.resolve(fileArg);
     if (fs.existsSync(resolvedPath) && fs.statSync(resolvedPath).isFile()) {
       targetPath = resolvedPath;
@@ -398,7 +459,6 @@ async function main() {
       process.exit(1);
     }
   } else {
-    // Interactive mode - ask for directory or file
     while (true) {
       const input = await question('\n📂 Enter file or directory path to extract: ');
       const resolvedInput = path.resolve(input || '.');
@@ -491,32 +551,143 @@ async function main() {
       useCompactOutput,
     };
 
+    // Extract all files first
     const { results, summary } = await extractCodebase(targetPath, options);
-    const output = formatDirectoryOutput(results, summary, targetPath, options, useCompactOutput);
 
-    writeOutputFile(outputFile, output);
+    // Check token budget
+    const estimatedTokens = estimateTokens(JSON.stringify(results));
+    let finalResults = results;
 
-    logger.success(`Done!`);
-    logger.info(`📄 Output: ${outputFile}`);
-    logger.info(`📊 Files: ${formatNumber(summary.totalFiles)}`);
-    logger.info(`📊 Lines: ${formatNumber(summary.totalLines)}`);
-    logger.info(`📊 AST Chunks: ${formatNumber(summary.totalChunks)}`);
-    logger.info(`📊 Functions: ${formatNumber(summary.totalFunctions)}`);
-    logger.info(`📊 Classes: ${formatNumber(summary.totalClasses)}`);
+    if (estimatedTokens > tokenBudget) {
+      logger.warn(`⚠️ Estimated tokens: ${formatNumber(estimatedTokens)} (Budget: ${formatNumber(tokenBudget)})`);
+      
+      if (autoTrim) {
+        finalResults = trimResultsToBudget(results, tokenBudget);
+        logger.info(`✂️ Trimmed to ${finalResults.length} files (from ${results.length})`);
+      } else if (interactive) {
+        // Interactive selection
+        console.log('\n📂 File Selection:');
+        console.log('─────────────────────────────────────────────────');
+        
+        const sortedResults = results.map(r => ({
+          result: r,
+          score: calculateFileScore(r),
+          tokens: estimateTokens(JSON.stringify(r))
+        })).sort((a, b) => b.score - a.score);
+        
+        const displayCount = Math.min(sortedResults.length, 20);
+        for (let i = 0; i < displayCount; i++) {
+          const file = sortedResults[i];
+          if (!file) continue;
+          const relPath = getRelativePath(file.result.file, targetPath);
+          console.log(`${i + 1}. [${file.tokens} tokens] ${relPath} (score: ${file.score})`);
+        }
+        
+        if (sortedResults.length > 20) {
+          console.log(`... and ${sortedResults.length - 20} more files`);
+        }
+        
+        console.log(`\n💡 Total tokens: ${formatNumber(estimatedTokens)}`);
+        console.log(`💰 Budget: ${formatNumber(tokenBudget)}\n`);
+        
+        const selection = await question(
+          `Select files to include (e.g., "1,2,5" or "auto" or "all"): `
+        );
+        
+        if (selection === 'auto') {
+          finalResults = trimResultsToBudget(results, tokenBudget);
+        } else if (selection !== 'all' && selection !== '') {
+          const indices = selection.split(',').map(s => parseInt(s.trim()) - 1);
+          const selected: ParseResult[] = [];
+          for (const idx of indices) {
+            if (idx >= 0 && idx < sortedResults.length) {
+              const item = sortedResults[idx];
+              if (item) {
+                selected.push(item.result);
+              }
+            }
+          }
+          if (selected.length > 0) {
+            finalResults = selected;
+          }
+        }
+      } else {
+        // Ask user
+        const shouldContinue = await question(
+          `\nContinue with all files? (y/n, or 't' to trim): `
+        );
+        
+        if (shouldContinue === 't') {
+          finalResults = trimResultsToBudget(results, tokenBudget);
+        } else if (shouldContinue !== 'y') {
+          process.exit(0);
+        }
+      }
+    }
 
-    console.log('\n' + '─'.repeat(50));
-    console.log('📖 Preview (first 30 lines):');
-    console.log('─'.repeat(50));
-    const preview = output.split('\n').slice(0, 30).join('\n');
-    console.log(preview);
-    console.log('─'.repeat(50));
-    console.log(`💡 Full output saved to: ${outputFile}`);
+    // If entry files are specified and we have enough results, use smart context
+    const useSmartContext = entryArg && finalResults.length > 0;
+    
+    if (useSmartContext) {
+      logger.info(`🧠 Building dependency-aware context...`);
+      
+      const builder = new SmartContextBuilder(finalResults);
+      
+      const context = builder.buildContext({
+        entryFiles,
+        maxDepth,
+        maxTokens: tokenBudget,
+        includeExports: true,
+        includeFunctions: true,
+        includeClasses: true,
+        mode: useCompactOutput ? 'compact' : 'full',
+        dependencyStrategy: strategy
+      });
+      
+      // Display summary
+      logger.info(`📊 Context built with ${context.includedFiles.length} files`);
+      logger.info(`💰 Tokens: ${formatNumber(context.tokens)}`);
+      
+      // Show breakdown
+      console.log('\n📊 Token Breakdown:');
+      const sortedFiles = Object.entries(context.tokenBreakdown)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 10);
+      
+      for (const [file, tokens] of sortedFiles) {
+        const relPath = getRelativePath(file, targetPath);
+        console.log(`  ${relPath}: ${formatNumber(tokens)} tokens`);
+      }
+      
+      if (Object.keys(context.tokenBreakdown).length > 10) {
+        console.log(`  ... and ${Object.keys(context.tokenBreakdown).length - 10} more files`);
+      }
+      
+      // Write output
+      writeOutputFile(outputFile, context.context);
+      
+      logger.success(`Done!`);
+      logger.info(`📄 Output: ${outputFile}`);
+      
+    } else {
+      // Use traditional output
+      const output = formatDirectoryOutput(finalResults, summary, targetPath, options, useCompactOutput);
+      writeOutputFile(outputFile, output);
+      
+      logger.success(`Done!`);
+      logger.info(`📄 Output: ${outputFile}`);
+      logger.info(`📊 Files: ${formatNumber(finalResults.length)}`);
+      logger.info(`📊 Functions: ${formatNumber(summary.totalFunctions)}`);
+      logger.info(`📊 Classes: ${formatNumber(summary.totalClasses)}`);
+      logger.info(`📊 Chunks: ${formatNumber(summary.totalChunks)}`);
+    }
   }
 
   rl.close();
 }
 
-main().catch((err) => {
-  logger.error(err.message);
+// Run main
+main().catch((error) => {
+  console.error('❌ Fatal error:', error);
   process.exit(1);
 });
