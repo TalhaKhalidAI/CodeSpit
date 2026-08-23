@@ -9,20 +9,34 @@ export const findFiles = async (
   extensions: string[],
   ignoreDirs: string[]
 ): Promise<string[]> => {
+  const defaultAlwaysIgnore = [
+    'node_modules', 'node-modules', '.git', '.svn', 'dist', 'build',
+    '.next', '.nuxt', 'coverage', '.cache', 'vendor', '.pnpm', '.turbo',
+    'out', '.output', 'tmp', 'temp', '.venv', 'venv', '__pycache__'
+  ];
+
+  const normalizedIgnore = new Set<string>();
+  for (const d of [...defaultAlwaysIgnore, ...ignoreDirs]) {
+    if (!d) continue;
+    normalizedIgnore.add(d);
+    normalizedIgnore.add(d.replace(/_/g, '-'));
+    normalizedIgnore.add(d.replace(/-/g, '_'));
+  }
+
   const patterns = extensions.map(ext => `${rootDir}/**/*${ext}`);
-  const ignorePatterns = ignoreDirs.map(dir => `**/${dir}/**`);
+  const ignorePatterns = Array.from(normalizedIgnore).map(dir => `**/${dir}/**`);
 
   const files: string[] = [];
   for (const pattern of patterns) {
     const matches = await glob(pattern, {
-      ignore: ['**/node_modules/**', '**/.git/**', '**/dist/**', '**/build/**', ...ignorePatterns],
+      ignore: ignorePatterns,
       nodir: true,
       absolute: true,
     });
     files.push(...matches);
   }
 
-  return files;
+  return Array.from(new Set(files));
 };
 
 export const readFileContent = (filePath: string): string => {

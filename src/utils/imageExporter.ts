@@ -24,7 +24,7 @@ interface FileData {
 }
 
 function highlightCode(line: string): string {
-  if (!line.trim()) return '&nbsp;';
+  if (!line.trim()) return ''; // skip blank lines entirely
 
   const placeholders: string[] = [];
   const pushPlaceholder = (html: string) => {
@@ -78,228 +78,86 @@ function highlightCode(line: string): string {
   return escaped;
 }
 
-function generateHtml(files: FileData[], rootDirName: string): string {
-  let totalChars = 0;
-  const fileBlocks = files.map((file) => {
-    totalChars += file.content.length;
-    const lineRows = file.lines.map((line, idx) => {
-      const lineNum = idx + 1;
-      const highlighted = highlightCode(line);
-      return `<tr class="line-row"><td class="ln">${lineNum}</td><td class="code-line"><code>${highlighted}</code></td></tr>`;
-    }).join('\n');
+// Each file: bold path header row + dense word-wrapped code block below it.
+// This gives pxpipe-style file separators with maximum code density.
+function buildDenseHtml(files: FileData[]): string {
+  const sections: string[] = [];
+  for (const file of files) {
+    const codeLines: string[] = [];
+    for (const line of file.lines) {
+      const rendered = highlightCode(line);
+      if (rendered) codeLines.push(rendered);
+    }
+    // File path header: always visible, bold
+    const header = `<div class="fhdr">// ${escapeHtml(file.relPath)}</div>`;
+    // Dense code block: word-wrap fills every pixel
+    const body = `<div class="codeblock">${codeLines.join(' ')}</div>`;
+    sections.push(header + body);
+  }
+  return sections.join('');
+}
 
-    return `
-      <div class="file-card">
-        <div class="file-header">
-          <div class="window-dots">
-            <span class="dot dot-red"></span>
-            <span class="dot dot-yellow"></span>
-            <span class="dot dot-green"></span>
-          </div>
-          <span class="file-icon">📄</span>
-          <span class="file-path">${escapeHtml(file.relPath)}</span>
-          <span class="file-badge">${file.lines.length} lines</span>
-        </div>
-        <div class="file-body">
-          <table class="code-table">
-            <tbody>
-              ${lineRows}
-            </tbody>
-          </table>
-        </div>
-      </div>
-    `;
-  }).join('\n');
+function generateHtml(files: FileData[]): string {
+  const fontPx = 5;
+  const bodyContent = buildDenseHtml(files);
 
-  const charCountFormatted = totalChars.toLocaleString();
-
-  return `
-<!DOCTYPE html>
+  return `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>CodeSpit PX-Dense Codebase Image</title>
+  <title>CodeSpit Dense Atlas</title>
   <style>
-    * {
-      box-sizing: border-box;
-      margin: 0;
-      padding: 0;
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body {
+      background: #ffffff;
+      color: #000000;
+      font-family: 'Courier New', Courier, monospace;
+      font-size: ${fontPx}px;
+      line-height: 1.1;
+      -webkit-font-smoothing: none;
+      text-rendering: optimizeSpeed;
     }
-    body {
-      background-color: #0b0e14;
-      color: #c9d1d9;
-      font-family: 'JetBrains Mono', 'Fira Code', 'SF Mono', Menlo, Consolas, "Liberation Mono", monospace;
-      padding: 24px;
+    .atlas { width: 100%; padding: 3px; }
+    /* File path: full-width bold header, clearly readable */
+    .fhdr {
+      display: block;
       width: 100%;
-      -webkit-font-smoothing: antialiased;
-    }
-    .header-bar {
-      margin-bottom: 20px;
-      padding: 16px 22px;
-      background: linear-gradient(135deg, #161b22 0%, #0d1117 100%);
-      border: 1px solid #30363d;
-      border-radius: 10px;
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      box-shadow: 0 8px 24px rgba(0,0,0,0.4);
-    }
-    .header-title {
-      font-size: 16px;
-      font-weight: 700;
-      color: #58a6ff;
-      display: flex;
-      align-items: center;
-      gap: 12px;
-      letter-spacing: 0.5px;
-    }
-    .px-badge {
-      background: linear-gradient(90deg, #1f6feb 0%, #8957e5 100%);
-      color: #ffffff;
-      font-size: 11px;
-      font-weight: 800;
-      padding: 3px 8px;
-      border-radius: 6px;
-      text-transform: uppercase;
-      letter-spacing: 1px;
-      box-shadow: 0 2px 8px rgba(31, 111, 235, 0.4);
-    }
-    .header-meta {
-      font-size: 12px;
-      color: #8b949e;
-      display: flex;
-      gap: 16px;
-      align-items: center;
-    }
-    .meta-pill {
-      background: #21262d;
-      border: 1px solid #30363d;
-      padding: 4px 10px;
-      border-radius: 14px;
-      color: #c9d1d9;
-    }
-    .meta-pill strong {
-      color: #79c0ff;
-    }
-    .container {
-      display: flex;
-      flex-direction: column;
-      gap: 20px;
-    }
-    .file-card {
-      background-color: #161b22;
-      border: 1px solid #30363d;
-      border-radius: 8px;
+      color: #000000;
+      font-weight: bold;
+      background: #e8e8e8;
+      padding: 0 2px;
+      margin-top: 2px;
+      white-space: nowrap;
       overflow: hidden;
-      box-shadow: 0 6px 16px rgba(0,0,0,0.35);
     }
-    .file-header {
-      background-color: #21262d;
-      padding: 10px 16px;
-      border-bottom: 1px solid #30363d;
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      font-size: 12px;
-      font-weight: 600;
-    }
-    .window-dots {
-      display: flex;
-      gap: 6px;
-      margin-right: 6px;
-    }
-    .dot {
-      width: 10px;
-      height: 10px;
-      border-radius: 50%;
-      display: inline-block;
-    }
-    .dot-red { background-color: #ff5f56; }
-    .dot-yellow { background-color: #ffbd2e; }
-    .dot-green { background-color: #27c93f; }
-
-    .file-icon {
-      font-size: 13px;
-    }
-    .file-path {
-      color: #79c0ff;
-      word-break: break-all;
-      font-family: inherit;
-    }
-    .file-badge {
-      margin-left: auto;
-      background-color: #30363d;
-      color: #8b949e;
-      font-size: 11px;
-      padding: 2px 8px;
-      border-radius: 12px;
-    }
-    .file-body {
-      padding: 6px 0;
-      overflow-x: auto;
-    }
-    .code-table {
+    /* Code block: word-wrap fills entire width, zero gaps */
+    .codeblock {
+      display: block;
       width: 100%;
-      border-collapse: collapse;
-      font-size: 11px;
-      line-height: 1.4;
+      white-space: pre-wrap;
+      word-break: break-all;
+      overflow-wrap: anywhere;
+      line-height: 1.0;
     }
-    .line-row:hover {
-      background-color: rgba(110, 118, 129, 0.12);
-    }
-    .ln {
-      width: 48px;
-      text-align: right;
-      padding: 0 10px;
-      color: #484f58;
-      user-select: none;
-      vertical-align: top;
-      border-right: 1px solid #21262d;
-      background-color: #161b22;
-    }
-    .code-line {
-      padding: 0 12px;
-      white-space: pre;
-      vertical-align: top;
-      color: #e6edf3;
-    }
-    code {
-      font-family: inherit;
-    }
-
-    /* Syntax Highlighting Tokens */
-    .syn-keyword { color: #ff7b72; font-weight: 600; }
-    .syn-string  { color: #a5d6ff; }
-    .syn-number  { color: #79c0ff; }
-    .syn-function{ color: #d2a8ff; }
-    .syn-comment { color: #8b949e; font-style: italic; }
+    /* High-contrast black-on-white tokens for AI readability */
+    .syn-keyword  { color: #000000; font-weight: bold; }
+    .syn-string   { color: #00008b; }
+    .syn-number   { color: #004400; }
+    .syn-function { color: #4b0000; }
+    .syn-comment  { color: #555555; }
   </style>
 </head>
 <body>
-  <div class="header-bar">
-    <div class="header-title">
-      <span>🤖 CodeSpit</span>
-      <span class="px-badge">PX-Dense Vision Render</span>
-    </div>
-    <div class="header-meta">
-      <span class="meta-pill">Project: <strong>${escapeHtml(rootDirName)}</strong></span>
-      <span class="meta-pill">Files: <strong>${files.length}</strong></span>
-      <span class="meta-pill">Chars: <strong>${charCountFormatted}</strong></span>
-    </div>
-  </div>
-  <div class="container">
-    ${fileBlocks}
-  </div>
+  <div class="atlas">${bodyContent}</div>
 </body>
-</html>
-  `;
+</html>`;
 }
 
 export async function exportCodebaseToImage(
   targetPath: string,
   options: Partial<ExtractOptions> = {},
   imageOptions: ImageExportOptions = {}
-): Promise<{ outputPath: string; fileCount: number; totalLines: number; sizeBytes: number }> {
+): Promise<{ outputPath: string; outputPaths: string[]; fileCount: number; totalLines: number; sizeBytes: number }> {
   const isDirectory = fs.statSync(targetPath).isDirectory();
   let filesToProcess: string[] = [];
 
@@ -316,7 +174,6 @@ export async function exportCodebaseToImage(
   }
 
   const rootDir = isDirectory ? targetPath : path.dirname(targetPath);
-  const rootDirName = path.basename(rootDir);
 
   let totalLines = 0;
   const filesData: FileData[] = [];
@@ -326,49 +183,51 @@ export async function exportCodebaseToImage(
     const lines = content.split('\n');
     totalLines += lines.length;
     const relPath = isDirectory ? getRelativePath(filePath, rootDir) : path.basename(filePath);
-    filesData.push({
-      filePath,
-      relPath,
-      content,
-      lines,
-    });
+    filesData.push({ filePath, relPath, content, lines });
   }
 
+  // 800px wide: lines wrap frequently, creating dense rows like pxpipe's page format
+  const viewportWidth = imageOptions.viewportWidth || 800;
+  const deviceScaleFactor = imageOptions.deviceScaleFactor || 2;
+
   const timestamp = new Date().toISOString().replace(/[:.]/g, '').slice(0, 14);
-  const defaultFileName = `codebase_dense_${timestamp}.png`;
-  const outputPath = imageOptions.outputPath || path.resolve(process.cwd(), defaultFileName);
+  const outputPath = imageOptions.outputPath || path.resolve(process.cwd(), `codebase_dense_${timestamp}.png`);
 
-  logger.info(`🖼️  Generating high-density HTML render for ${filesData.length} files...`);
-  const htmlContent = generateHtml(filesData, rootDirName);
+  logger.info(`🖼️  Building ultra-dense wall: ${filesData.length} files, ${totalLines.toLocaleString()} lines...`);
+  logger.info(`🌐 Launching Puppeteer (${viewportWidth}px wide, ${deviceScaleFactor}x scale)...`);
 
-  logger.info(`🌐 Launching Puppeteer browser to capture crisp image...`);
   const browser = await puppeteer.launch({
     args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
   });
 
   try {
     const page = await browser.newPage();
-    const deviceScaleFactor = imageOptions.deviceScaleFactor || 2;
 
-    await page.setViewport({
-      width: 1400,
-      height: 900,
-      deviceScaleFactor,
-    });
+    await page.setViewport({ width: viewportWidth, height: 900, deviceScaleFactor });
 
+    const htmlContent = generateHtml(filesData);
     await page.setContent(htmlContent, { waitUntil: 'domcontentloaded' });
 
-    logger.info(`📸 Capturing full-page high-res screenshot (scale factor ${deviceScaleFactor}x)...`);
-    await page.screenshot({
-      path: outputPath,
-      fullPage: true,
-      type: 'png',
-    });
+    logger.info(`📸 Capturing ultra-dense wall (${viewportWidth}px, ${deviceScaleFactor}x)...`);
 
+    try {
+      await page.screenshot({ path: outputPath, fullPage: true, type: 'png' });
+    } catch (err: any) {
+      if (err?.message?.includes('Page is too large')) {
+        logger.warn(`⚠️ Canvas overflow at ${deviceScaleFactor}x — retrying at 1x...`);
+        await page.setViewport({ width: viewportWidth, height: 900, deviceScaleFactor: 1 });
+        await page.screenshot({ path: outputPath, fullPage: true, type: 'png' });
+      } else {
+        throw err;
+      }
+    }
+
+    await page.close();
     const stats = fs.statSync(outputPath);
 
     return {
       outputPath,
+      outputPaths: [outputPath],
       fileCount: filesData.length,
       totalLines,
       sizeBytes: stats.size,

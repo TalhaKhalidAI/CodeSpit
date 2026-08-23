@@ -373,6 +373,19 @@ function formatDirectoryOutput(
 // MAIN
 // ============================================================
 
+function logImageResult(result: { outputPath: string; outputPaths?: string[]; fileCount: number; totalLines: number; sizeBytes: number }) {
+  logger.success(`Done!`);
+  if (result.outputPaths && result.outputPaths.length > 1) {
+    logger.info(`🖼️  Image Saved (${result.outputPaths.length} parts):`);
+    result.outputPaths.forEach((p, idx) => logger.info(`   Part ${idx + 1}: ${p}`));
+  } else {
+    logger.info(`🖼️  Image Saved: ${result.outputPath}`);
+  }
+  logger.info(`📊 Files Processed: ${formatNumber(result.fileCount)}`);
+  logger.info(`📊 Total Lines: ${formatNumber(result.totalLines)}`);
+  logger.info(`📊 File Size: ${(result.sizeBytes / (1024 * 1024)).toFixed(2)} MB`);
+}
+
 async function main() {
   logger.header('🤖 CodeSpit - AI-READY CODE EXTRACTOR WITH AST PARSING');
 
@@ -419,11 +432,7 @@ async function main() {
     logger.info(`📸 Dense Code Image Mode requested via flag...`);
     try {
       const result = await exportCodebaseToImage(targetPath);
-      logger.success(`Done!`);
-      logger.info(`🖼️  Image Saved: ${result.outputPath}`);
-      logger.info(`📊 Files Processed: ${formatNumber(result.fileCount)}`);
-      logger.info(`📊 Total Lines: ${formatNumber(result.totalLines)}`);
-      logger.info(`📊 File Size: ${(result.sizeBytes / (1024 * 1024)).toFixed(2)} MB`);
+      logImageResult(result);
     } catch (error) {
       logger.error(error instanceof Error ? error.message : String(error));
       process.exit(1);
@@ -440,11 +449,7 @@ async function main() {
     if (choice === '3') {
       try {
         const result = await exportCodebaseToImage(targetPath);
-        logger.success(`Done!`);
-        logger.info(`🖼️  Image Saved: ${result.outputPath}`);
-        logger.info(`📊 Files Processed: ${formatNumber(result.fileCount)}`);
-        logger.info(`📊 Total Lines: ${formatNumber(result.totalLines)}`);
-        logger.info(`📊 File Size: ${(result.sizeBytes / (1024 * 1024)).toFixed(2)} MB`);
+        logImageResult(result);
       } catch (error) {
         logger.error(error instanceof Error ? error.message : String(error));
         process.exit(1);
@@ -499,10 +504,11 @@ async function main() {
     logger.success(`Target: ${targetPath}`);
 
     logger.section('Subdirectories found:');
+    const ignoredSubdirs = ['node_modules', 'node-modules', '.git', 'dist', 'build', '.next', '.nuxt', 'coverage', '.cache', 'vendor', '.pnpm'];
     const subdirs = fs.readdirSync(targetPath)
       .filter(d => fs.statSync(path.join(targetPath, d)).isDirectory())
       .filter(d => !d.startsWith('.'))
-      .filter(d => d !== 'node_modules' && d !== '.git');
+      .filter(d => !ignoredSubdirs.includes(d));
 
     subdirs.forEach((d, i) => {
       console.log(`  ${i + 1}. ${d}`);
@@ -521,11 +527,7 @@ async function main() {
           includeExtensions: ['.ts', '.tsx', '.js', '.jsx', '.py', '.rb', '.php', '.json'],
         };
         const result = await exportCodebaseToImage(targetPath, options);
-        logger.success(`Done!`);
-        logger.info(`🖼️  Image Saved: ${result.outputPath}`);
-        logger.info(`📊 Files Processed: ${formatNumber(result.fileCount)}`);
-        logger.info(`📊 Total Lines: ${formatNumber(result.totalLines)}`);
-        logger.info(`📊 File Size: ${(result.sizeBytes / (1024 * 1024)).toFixed(2)} MB`);
+        logImageResult(result);
       } catch (error) {
         logger.error(error instanceof Error ? error.message : String(error));
         process.exit(1);

@@ -39,8 +39,18 @@ export interface ParseResult {
 export interface ImageExportOptions {
   outputPath?: string;
   deviceScaleFactor?: number;
+  viewportWidth?: number;
   columns?: number;
   theme?: 'dark' | 'light';
+  maxLinesPerPart?: number;
+}
+
+export interface ImageExportResult {
+  outputPath: string;
+  outputPaths: string[];
+  fileCount: number;
+  totalLines: number;
+  sizeBytes: number;
 }
 
 export interface ExtractOptions {
