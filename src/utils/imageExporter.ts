@@ -24,7 +24,7 @@ interface FileData {
 }
 
 function highlightCode(line: string): string {
-  if (!line.trim()) return ''; // skip blank lines entirely
+  if (!line.trim()) return ''; // skip blank lines — no empty rows in dense mode
 
   const placeholders: string[] = [];
   const pushPlaceholder = (html: string) => {
@@ -78,19 +78,18 @@ function highlightCode(line: string): string {
   return escaped;
 }
 
-// Each file: bold path header row + dense word-wrapped code block below it.
-// This gives pxpipe-style file separators with maximum code density.
+// Each file: bold path header + dense word-wrapped codeblock
 function buildDenseHtml(files: FileData[]): string {
   const sections: string[] = [];
   for (const file of files) {
     const codeLines: string[] = [];
     for (const line of file.lines) {
-      const rendered = highlightCode(line);
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      const rendered = highlightCode(trimmed);
       if (rendered) codeLines.push(rendered);
     }
-    // File path header: always visible, bold
     const header = `<div class="fhdr">// ${escapeHtml(file.relPath)}</div>`;
-    // Dense code block: word-wrap fills every pixel
     const body = `<div class="codeblock">${codeLines.join(' ')}</div>`;
     sections.push(header + body);
   }
@@ -98,7 +97,7 @@ function buildDenseHtml(files: FileData[]): string {
 }
 
 function generateHtml(files: FileData[]): string {
-  const fontPx = 5;
+  const fontPx = 8;
   const bodyContent = buildDenseHtml(files);
 
   return `<!DOCTYPE html>
@@ -111,46 +110,75 @@ function generateHtml(files: FileData[]): string {
     html, body {
       background: #ffffff;
       color: #000000;
-      font-family: 'Courier New', Courier, monospace;
+      font-family: Consolas, 'Courier New', Courier, monospace;
       font-size: ${fontPx}px;
+      font-weight: normal;
       line-height: 1.1;
-      -webkit-font-smoothing: none;
-      text-rendering: optimizeSpeed;
+      letter-spacing: 0px;
+      word-spacing: 0px;
     }
-    .atlas { width: 100%; padding: 3px; }
-    /* File path: full-width bold header, clearly readable */
+    .atlas { width: 100%; padding: 2px 3px; }
+    /* File path header: clean separation */
     .fhdr {
       display: block;
       width: 100%;
-      color: #000000;
+      background: #000000;
+      color: #ffffff;
       font-weight: bold;
-      background: #e8e8e8;
       padding: 0 2px;
-      margin-top: 2px;
+      margin-top: 1px;
       white-space: nowrap;
       overflow: hidden;
     }
-    /* Code block: word-wrap fills entire width, zero gaps */
+    /* Code block: pure black, retains formatting */
     .codeblock {
       display: block;
       width: 100%;
       white-space: pre-wrap;
-      word-break: break-all;
+      word-break: normal;
       overflow-wrap: anywhere;
-      line-height: 1.0;
+      line-height: 1.1;
     }
-    /* High-contrast black-on-white tokens for AI readability */
-    .syn-keyword  { color: #000000; font-weight: bold; }
-    .syn-string   { color: #00008b; }
-    .syn-number   { color: #004400; }
-    .syn-function { color: #4b0000; }
-    .syn-comment  { color: #555555; }
+    /* All tokens → pure black, uniform weight */
+    .syn-keyword  { color: #000000; font-weight: normal; }
+    .syn-string   { color: #000000; }
+    .syn-number   { color: #000000; }
+    .syn-function { color: #000000; }
+    .syn-comment  { color: #000000; }
   </style>
 </head>
 <body>
   <div class="atlas">${bodyContent}</div>
 </body>
 </html>`;
+}
+
+
+// ─── Render one page (batch of files) to a single PNG ────────────────────────
+async function renderPage(
+  browser: Awaited<ReturnType<typeof puppeteer.launch>>,
+  pageFiles: FileData[],
+  outputPath: string,
+  viewportWidth: number,
+  deviceScaleFactor: number
+): Promise<void> {
+  const page = await browser.newPage();
+  await page.setViewport({ width: viewportWidth, height: 900, deviceScaleFactor });
+  const html = generateHtml(pageFiles);
+  await page.setContent(html, { waitUntil: 'domcontentloaded' });
+  try {
+    await page.screenshot({ path: outputPath, fullPage: true, type: 'png' });
+  } catch (err: any) {
+    if (err?.message?.includes('Page is too large')) {
+      // Fall back to 1x scale — halves physical pixel height
+      await page.setViewport({ width: viewportWidth, height: 900, deviceScaleFactor: 1 });
+      await page.screenshot({ path: outputPath, fullPage: true, type: 'png' });
+    } else {
+      throw err;
+    }
+  } finally {
+    await page.close();
+  }
 }
 
 export async function exportCodebaseToImage(
@@ -186,53 +214,67 @@ export async function exportCodebaseToImage(
     filesData.push({ filePath, relPath, content, lines });
   }
 
-  // 800px wide: lines wrap frequently, creating dense rows like pxpipe's page format
   const viewportWidth = imageOptions.viewportWidth || 800;
   const deviceScaleFactor = imageOptions.deviceScaleFactor || 2;
 
-  const timestamp = new Date().toISOString().replace(/[:.]/g, '').slice(0, 14);
-  const outputPath = imageOptions.outputPath || path.resolve(process.cwd(), `codebase_dense_${timestamp}.png`);
+  // ── Page splitting ──────────────────────────────────────────────────────────
+  // Chromium caps screenshots at ~16,384px physical height.
+  // At 5px font × 2x scale = 10px/row physical. Word-wrapped code averages
+  // ~2-3 rendered rows per source line → safe limit: ~2,000 source lines/page.
+  // For very long files, a single file may still be split onto multiple pages.
+  const MAX_LINES_PER_PAGE = imageOptions.maxLinesPerPart || 2000;
 
-  logger.info(`🖼️  Building ultra-dense wall: ${filesData.length} files, ${totalLines.toLocaleString()} lines...`);
+  const pageGroups: FileData[][] = [];
+  let currentGroup: FileData[] = [];
+  let currentGroupLines = 0;
+
+  for (const file of filesData) {
+    if (currentGroupLines + file.lines.length > MAX_LINES_PER_PAGE && currentGroup.length > 0) {
+      pageGroups.push(currentGroup);
+      currentGroup = [];
+      currentGroupLines = 0;
+    }
+    currentGroup.push(file);
+    currentGroupLines += file.lines.length;
+  }
+  if (currentGroup.length > 0) pageGroups.push(currentGroup);
+
+  const timestamp = new Date().toISOString().replace(/[:.]/g, '').slice(0, 14);
+  const baseOutputPath = imageOptions.outputPath || path.resolve(process.cwd(), `codebase_dense_${timestamp}.png`);
+  const baseName = baseOutputPath.replace(/\.png$/i, '');
+
+  const totalPages = pageGroups.length;
+  logger.info(`🖼️  Building ultra-dense atlas: ${filesData.length} files, ${totalLines.toLocaleString()} lines → ${totalPages} page(s)...`);
   logger.info(`🌐 Launching Puppeteer (${viewportWidth}px wide, ${deviceScaleFactor}x scale)...`);
 
   const browser = await puppeteer.launch({
     args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
   });
 
+  const outputPaths: string[] = [];
+
   try {
-    const page = await browser.newPage();
+    for (let i = 0; i < pageGroups.length; i++) {
+      const pagePath = totalPages === 1
+        ? `${baseName}.png`
+        : `${baseName}_page${String(i + 1).padStart(3, '0')}.png`;
 
-    await page.setViewport({ width: viewportWidth, height: 900, deviceScaleFactor });
-
-    const htmlContent = generateHtml(filesData);
-    await page.setContent(htmlContent, { waitUntil: 'domcontentloaded' });
-
-    logger.info(`📸 Capturing ultra-dense wall (${viewportWidth}px, ${deviceScaleFactor}x)...`);
-
-    try {
-      await page.screenshot({ path: outputPath, fullPage: true, type: 'png' });
-    } catch (err: any) {
-      if (err?.message?.includes('Page is too large')) {
-        logger.warn(`⚠️ Canvas overflow at ${deviceScaleFactor}x — retrying at 1x...`);
-        await page.setViewport({ width: viewportWidth, height: 900, deviceScaleFactor: 1 });
-        await page.screenshot({ path: outputPath, fullPage: true, type: 'png' });
-      } else {
-        throw err;
-      }
+      logger.info(`📸 Page ${i + 1}/${totalPages} → ${path.basename(pagePath)}`);
+      await renderPage(browser, pageGroups[i]!, pagePath, viewportWidth, deviceScaleFactor);
+      outputPaths.push(pagePath);
     }
-
-    await page.close();
-    const stats = fs.statSync(outputPath);
-
-    return {
-      outputPath,
-      outputPaths: [outputPath],
-      fileCount: filesData.length,
-      totalLines,
-      sizeBytes: stats.size,
-    };
   } finally {
     await browser.close();
   }
+
+  const totalSize = outputPaths.reduce((sum, p) => sum + fs.statSync(p).size, 0);
+  logger.info(`✅ Saved ${outputPaths.length} image(s). Total: ${(totalSize / 1024 / 1024).toFixed(2)} MB`);
+
+  return {
+    outputPath: outputPaths[0]!,
+    outputPaths,
+    fileCount: filesData.length,
+    totalLines,
+    sizeBytes: totalSize,
+  };
 }
