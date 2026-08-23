@@ -7,6 +7,7 @@ import { extractCodebase } from './parser/extractor.js';
 import { parseFile } from './parser/astParser.js';
 import { logger, formatNumber } from './utils/logger.js';
 import { getRelativePath, writeOutputFile } from './utils/fileUtils.js';
+import { exportCodebaseToImage } from './utils/imageExporter.js';
 import type { ExtractOptions, ParseResult } from './types/index.js';
 
 const rl = readline.createInterface({
@@ -375,15 +376,17 @@ function formatDirectoryOutput(
 async function main() {
   logger.header('🤖 CodeSpit - AI-READY CODE EXTRACTOR WITH AST PARSING');
 
-  // Check if a file was passed as argument
+  // Check if flags or path passed as argument
   const args = process.argv.slice(2);
-  const fileArg = args[0];
+  const isImageFlag = args.includes('--image') || args.includes('-i');
+  const nonFlagArgs = args.filter(a => !a.startsWith('-'));
+  const fileArg = nonFlagArgs[0];
 
   let targetPath = '.';
   let isSingleFile = false;
 
   if (fileArg) {
-    // Single file mode
+    // Single file mode or specified path
     const resolvedPath = path.resolve(fileArg);
     if (fs.existsSync(resolvedPath) && fs.statSync(resolvedPath).isFile()) {
       targetPath = resolvedPath;
@@ -412,11 +415,45 @@ async function main() {
     }
   }
 
+  if (isImageFlag) {
+    logger.info(`📸 Dense Code Image Mode requested via flag...`);
+    try {
+      const result = await exportCodebaseToImage(targetPath);
+      logger.success(`Done!`);
+      logger.info(`🖼️  Image Saved: ${result.outputPath}`);
+      logger.info(`📊 Files Processed: ${formatNumber(result.fileCount)}`);
+      logger.info(`📊 Total Lines: ${formatNumber(result.totalLines)}`);
+      logger.info(`📊 File Size: ${(result.sizeBytes / (1024 * 1024)).toFixed(2)} MB`);
+    } catch (error) {
+      logger.error(error instanceof Error ? error.message : String(error));
+      process.exit(1);
+    }
+    rl.close();
+    return;
+  }
+
   if (isSingleFile) {
     // ─── SINGLE FILE MODE ──────────────────────────────────────
-    const modeInput = await question('\n📋 Output mode:\n  1. Full code (with line numbers)\n  2. Compact AST only (recommended, 80% less tokens)\n\nChoose (1 or 2): ');
-    const useCompactOutput = modeInput.trim() !== '1';
+    const modeInput = await question('\n📋 Output mode:\n  1. Full code (with line numbers)\n  2. Compact AST only (recommended, 80% less tokens)\n  3. Dense Code Image (Puppeteer rendering, no AST)\n\nChoose (1, 2, or 3): ');
+    const choice = modeInput.trim();
 
+    if (choice === '3') {
+      try {
+        const result = await exportCodebaseToImage(targetPath);
+        logger.success(`Done!`);
+        logger.info(`🖼️  Image Saved: ${result.outputPath}`);
+        logger.info(`📊 Files Processed: ${formatNumber(result.fileCount)}`);
+        logger.info(`📊 Total Lines: ${formatNumber(result.totalLines)}`);
+        logger.info(`📊 File Size: ${(result.sizeBytes / (1024 * 1024)).toFixed(2)} MB`);
+      } catch (error) {
+        logger.error(error instanceof Error ? error.message : String(error));
+        process.exit(1);
+      }
+      rl.close();
+      return;
+    }
+
+    const useCompactOutput = choice !== '1';
     const timestamp = new Date().toISOString().replace(/[:.]/g, '').slice(0, 14);
     const outputFile = `ai_context_${path.basename(targetPath, path.extname(targetPath))}_${timestamp}.txt`;
 
@@ -474,9 +511,30 @@ async function main() {
     const ignoreInput = await question('\nEnter directories to ignore (space separated, or press Enter for none): ');
     const ignoreDirs = ignoreInput ? ignoreInput.split(/\s+/) : [];
 
-    const modeInput = await question('\n📋 Output mode:\n  1. Full code (with line numbers)\n  2. Compact AST only (recommended, 80% less tokens)\n\nChoose (1 or 2): ');
-    const useCompactOutput = modeInput.trim() !== '1';
+    const modeInput = await question('\n📋 Output mode:\n  1. Full code (with line numbers)\n  2. Compact AST only (recommended, 80% less tokens)\n  3. Dense Code Image (Puppeteer rendering, no AST)\n\nChoose (1, 2, or 3): ');
+    const choice = modeInput.trim();
 
+    if (choice === '3') {
+      try {
+        const options: Partial<ExtractOptions> = {
+          ignoreDirs: ['node_modules', '.git', 'dist', 'build', ...ignoreDirs],
+          includeExtensions: ['.ts', '.tsx', '.js', '.jsx', '.py', '.rb', '.php', '.json'],
+        };
+        const result = await exportCodebaseToImage(targetPath, options);
+        logger.success(`Done!`);
+        logger.info(`🖼️  Image Saved: ${result.outputPath}`);
+        logger.info(`📊 Files Processed: ${formatNumber(result.fileCount)}`);
+        logger.info(`📊 Total Lines: ${formatNumber(result.totalLines)}`);
+        logger.info(`📊 File Size: ${(result.sizeBytes / (1024 * 1024)).toFixed(2)} MB`);
+      } catch (error) {
+        logger.error(error instanceof Error ? error.message : String(error));
+        process.exit(1);
+      }
+      rl.close();
+      return;
+    }
+
+    const useCompactOutput = choice !== '1';
     const timestamp = new Date().toISOString().replace(/[:.]/g, '').slice(0, 14);
     const outputFile = `ai_context_${timestamp}.txt`;
 

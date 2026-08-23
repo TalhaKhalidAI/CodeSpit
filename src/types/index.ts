@@ -36,13 +36,22 @@ export interface ParseResult {
   totalItems: number;
 }
 
+export interface ImageExportOptions {
+  outputPath?: string;
+  deviceScaleFactor?: number;
+  columns?: number;
+  theme?: 'dark' | 'light';
+}
+
 export interface ExtractOptions {
   maxLines: number;
   maxChunkTokens: number;
   overlapLines: number;
   ignoreDirs: string[];
   includeExtensions: string[];
-  useCompactOutput: boolean; // ✅ NEW: Switch between full/compact
+  useCompactOutput: boolean; // ✅ Switch between full/compact
+  isImageMode?: boolean;     // ✅ Render codebase into image via Puppeteer
+  imageOptions?: ImageExportOptions;
 }
 
 export interface Summary {

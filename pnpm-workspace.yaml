@@ -1,5 +1,7 @@
 allowBuilds:
+  canvas: true
   esbuild: set this to true or false
+  puppeteer: true
   tree-sitter: false
   tree-sitter-javascript: false
   tree-sitter-json: false

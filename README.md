@@ -55,6 +55,7 @@ Traditional code extraction tools either:
 | **🧩 Semantic Chunking** | Split code by logical boundaries (functions, classes) |
 | **📊 AST Analysis** | Extract functions, classes, imports, exports, interfaces |
 | **⚡ Compact Mode** | Reduce token usage by 80-90% for AI consumption |
+| **📸 Dense Code Image** | Render all files + relative paths + full content to crisp high-res PNG via Puppeteer (no AST) |
 | **📄 Single File Mode** | Parse individual files |
 | **📁 Directory Mode** | Parse entire projects |
 | **🔄 Interactive CLI** | User-friendly prompts for all options |

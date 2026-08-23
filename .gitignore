@@ -121,3 +121,4 @@ binding.gyp
 *.generated.*
 *.min.*
 *.bundle.*
+*.png
